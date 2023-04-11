@@ -2,7 +2,8 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 # Open the NetCDF file and load the data
-filename = 'Rgn_number_of_particles_per_air_molecule_of_soluble_nucleation_mode_aerosol_in_air_m01s34i101.nc'
+path= "/jet/home/ding0928/python_analysis/Han_connect/nc_flie/u-ct706/full_nc_files/"
+filename = path+'Rgn_number_of_particles_per_air_molecule_of_soluble_nucleation_mode_aerosol_in_air_m01s34i101.nc'
 ds = xr.open_dataset(filename)
 
 # Extract the variable and time data from the dataset
