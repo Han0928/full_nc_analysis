@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This folder contains Python scripts for analyzing the `connected_big_nc` folder, which contains large netCDF files.
+This folder contains Python scripts for analyzing the `connected_big_nc`(/jet/home/ding0928/python_analysis/Han_connect/nc_flie/u-ct706/full_nc_files) folder, which contains large netCDF files.
 
 ## Purpose
 
