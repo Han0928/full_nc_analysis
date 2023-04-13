@@ -16,7 +16,7 @@ def read_pt_data(potential_temperature_file, air_pressure_file):
 
 def convert_theta_to_temperature(potential_temperature, air_pressure):
     Rd_cp = 287.05 / 1004.0
-    temperature = potential_temperature * (air_pressure / 100000.0) ** Rd_cp
+    temperature = potential_temperature * (air_pressure / 1000.0) ** Rd_cp  #hpa
     return temperature
 
 def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual_temperature):
