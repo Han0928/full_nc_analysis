@@ -1,65 +1,60 @@
 import xarray as xr
 import dask.array as da
 import matplotlib.pyplot as plt
+import os
 
-def process_nc_file(filename):
-    # Use dask to load the data in chunks
-    chunks = {'time': 50, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
+def read_pt_data(potential_temperature_file, air_pressure_file):
+    chunks = {'time': 20, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
+    
+    ds_theta = xr.open_dataset(potential_temperature_file, chunks=chunks)
+    ds_p = xr.open_dataset(air_pressure_file, chunks=chunks)
+
+    potential_temperature = ds_theta['air_potential_temperature']
+    air_pressure = ds_p['air_pressure']
+    
+    return potential_temperature, air_pressure
+
+def convert_theta_to_temperature(potential_temperature, air_pressure):
+    Rd_cp = 287.05 / 1004.0
+    temperature = potential_temperature * (air_pressure / 100000.0) ** Rd_cp
+    return temperature
+
+def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual_temperature):
+    R = 287.0
+    Na = 6.022e23
+    air_density = air_pressure / (R * actual_temperature)
+    number_concentration = mixing_ratio_data * air_density * Na
+    return number_concentration
+
+def process_nc_file(filename, air_pressure, actual_temperature):
+    chunks = {'time': 20, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
     ds = xr.open_dataset(filename, chunks=chunks)
-
-    # Extract the variable and time data from the dataset
     variable_name = filename.split('/')[-1].split('_')[1:-1]
     variable_data = ds['_'.join(variable_name)]
-    variable_data_mean = variable_data.mean(dim=['grid_latitude', 'grid_longitude']).sel(model_level_number=3)
-    print(f'variable_data_mean ({variable_name}):', variable_data_mean)
+    number_concentration_data = mixing_ratio_to_number_concentration(variable_data, air_pressure, actual_temperature)
+    number_concentration_mean = number_concentration_data.mean(dim=['grid_latitude', 'grid_longitude']).sel(model_level_number=3)
     time_data = ds['time']
-
-    # Compute the value of the mean
-    variable_data_mean_value = variable_data_mean.compute()
+    number_concentration_mean_value = number_concentration_mean.compute()
     time_data_value = time_data.compute()
+    return number_concentration_mean_value, time_data_value
 
-    # Print the value of the mean
-    print(f'The mean of variable_data ({variable_name}) is:', variable_data_mean_value)
-
-    # Convert the time data to a dask array
-    time = da.from_array(ds['time'], chunks=chunks['time'])
-
-    return variable_data_mean_value, time_data_value
-
-def process_nc_files(filenames):
-    variable_data_mean_values = []
+def process_nc_files(filenames, air_pressure, actual_temperature):
+    number_concentration_mean_values = []
     time_data_values = []
-
     for filename in filenames:
-        variable_data_mean_value, time_data_value = process_nc_file(filename)
-        variable_data_mean_values.append(variable_data_mean_value)
+        number_concentration_mean_value, time_data_value = process_nc_file(filename, air_pressure, actual_temperature)
+        number_concentration_mean_values.append(number_concentration_mean_value)
         time_data_values.append(time_data_value)
+    return number_concentration_mean_values, time_data_values
 
-    return variable_data_mean_values, time_data_values
-
-def plot_data(time_data_values, variable_data_mean_values, filenames):
-    fig, ax = plt.subplots(figsize=(8,6))
-    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
-    markers = ['o', 's', '^', 'D', 'v']
-    
-    labels = []
-    for filename in filenames:
-        variable_name = filename.split('/')[-1].split('_')[8:10]
-        variable_name = '_'.join(variable_name)
-        label = filename.split('/')[-1].split('_')[3].capitalize() + ' (' + variable_name + ')'
-        labels.append(label)
-
-    for i, (time_data_value, variable_data_mean_value) in enumerate(zip(time_data_values, variable_data_mean_values)):
-        ax.plot(time_data_value, variable_data_mean_value, label=labels[i], color=colors[i], marker=markers[i], markersize=5, linewidth=1)
-
-    ax.set_xlabel('Time', fontsize=14)
-    ax.set_ylabel('# of partiles/air molecule', fontsize=14)
-    ax.set_title('Time series of July-August, 2014', fontsize=16, fontweight='bold')
-    ax.tick_params(axis='both', labelsize=12)
-    ax.legend(labels=labels, fontsize=12, frameon=False)
-    plt.xticks(rotation=30)
+def plot_data(time_data_values, number_concentration_mean_values, filenames):
+    fig, ax = plt.subplots()
+    for i, (time_data, number_concentration_mean) in enumerate(zip(time_data_values, number_concentration_mean_values)):
+        ax.plot(time_data, number_concentration_mean, label=filenames[i].split('/')[-1])
+    ax.legend()
+    plt.xlabel('Time')
+    plt.ylabel('Number concentration mean')
     plt.show()
-
 
 # Example usage:
 path = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-ct706/full_nc_files/"
@@ -69,6 +64,11 @@ filenames = [path+'Rgn_number_of_particles_per_air_molecule_of_insoluble_aitken_
              path+'Rgn_number_of_particles_per_air_molecule_of_soluble_coarse_mode_aerosol_in_air_m01s34i113.nc',
              path+'Rgn_number_of_particles_per_air_molecule_of_soluble_nucleation_mode_aerosol_in_air_m01s34i101.nc']
 
-variable_data_mean_values, time_data_values = process_nc_files(filenames)
+potential_temperature_file = path + 'Rgn_air_potential_temperature_m01s00i004.nc'
+air_pressure_file = path + 'Rgn_air_pressure_m01s00i408.nc'
 
-plot_data(time_data_values, variable_data_mean_values, filenames)
+potential_temperature, air_pressure = read_pt_data(potential_temperature_file, air_pressure_file)
+actual_temperature = convert_theta_to_temperature(potential_temperature, air_pressure)
+
+number_concentration_mean_values, time_data_values = process_nc_files(filenames, air_pressure, actual_temperature)
+plot_data(time_data_values, number_concentration_mean_values, filenames)
