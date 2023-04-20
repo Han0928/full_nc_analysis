@@ -3,74 +3,147 @@ import dask.array as da
 import matplotlib.pyplot as plt
 import os
 import matplotlib.dates as mdates
+import numpy as np
+import iris
+import iris.coord_systems as cs
+import iris.coord_systems as coord_systems
 
-def read_pt_data(potential_temperature_file, air_pressure_file):
-    chunks = {'time': 20, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
+os.environ["OPENBLAS_NUM_THREADS"] = "8"
+
+def bbox_extract_2Dcoords(cube, bbox):
+    minmax = lambda x: (np.min(x), np.max(x))
+    lons = cube.coord('longitude').points # the longi(unrotated) is newly-added
+    lats = cube.coord('latitude').points
+    inregion = np.logical_and(np.logical_and(lons > bbox[0],
+                                             lons < bbox[1]),
+                              np.logical_and(lats > bbox[2],
+                                             lats < bbox[3]))
+    region_inds = np.where(inregion)
+    imin, imax = minmax(region_inds[0])
+    jmin, jmax = minmax(region_inds[1])
+    return cube[..., imin:imax+1, jmin:jmax+1]
+
+def add_lat_lon(cube, bbox):
+    polelat = cube.coord('grid_longitude').coord_system.grid_north_pole_latitude
+    polelon = cube.coord('grid_longitude').coord_system.grid_north_pole_longitude  
+    print("North pole latitude:", polelat) 
+    print("North pole longitude:", polelon)
+
+    source_lon = cube.coord('grid_longitude').points
+    source_lat = cube.coord('grid_latitude').points
+    lat2d = np.transpose(np.tile(source_lat,[len(source_lon),1]))
+    lon2d = np.tile(source_lon,[len(source_lat),1])
+
+    lons, lats = iris.analysis.cartography.unrotate_pole(lon2d, lat2d, polelon, polelat)
+
+    longit = iris.coords.AuxCoord(lons,'longitude', units='degrees', coord_system=cs.GeogCS(6371229.0))
+    latit =  iris.coords.AuxCoord(lats,'latitude', units='degrees', coord_system=cs.GeogCS(6371229.0))
     
-    ds_theta = xr.open_dataset(potential_temperature_file, chunks=chunks)
-    ds_p = xr.open_dataset(air_pressure_file, chunks=chunks)
+    i_test = 1 # a label for turn-on/off 
+    if i_test == 0:
+        # Determine the dimensions to add the latitude and longitude coordinates
+        dims = tuple(range(cube.ndim))
+        for dim in ('time', 'model_level_number', 'grid_latitude', 'grid_longitude'):
+            if dim in cube.dim_coords:
+                dims = tuple(d for d in dims if d != cube.coord_dims(dim)[0])
 
-    potential_temperature = ds_theta['air_potential_temperature']
-    air_pressure = ds_p['air_pressure']
-    
-    return potential_temperature, air_pressure
+    cube.add_aux_coord(longit, (2,3)) 
+    cube.add_aux_coord(latit, (2,3))
 
+    return bbox_extract_2Dcoords(cube, bbox)
+
+def read_pt_data(potential_temperature_file, air_pressure_file, bbox):
+    # Load the potential temperature and air pressure cubes from file
+    potential_temperature_cube = iris.load_cube(potential_temperature_file)
+    air_pressure_cube = iris.load_cube(air_pressure_file)
+    print(potential_temperature_cube.coord('grid_longitude').points.min(), potential_temperature_cube.coord('grid_longitude').points.max())
+    print(potential_temperature_cube.coord('grid_latitude').points.min(), potential_temperature_cube.coord('grid_latitude').points.max())
+    print(potential_temperature_cube.units) # K
+    print(air_pressure_cube.units) #Pa
+
+    # Add the latitude and longitude coordinates to the cubes
+    potential_temperature_cube = add_lat_lon(potential_temperature_cube, bbox)
+    air_pressure_cube = add_lat_lon(air_pressure_cube, bbox)
+    return potential_temperature_cube, air_pressure_cube
+
+# a subroutine to convert theta to T(k)
 def convert_theta_to_temperature(potential_temperature, air_pressure):
-    Rd_cp = 287.05 / 1004.0
-    temperature = potential_temperature * (air_pressure / 100000.0) ** Rd_cp  #hpa? 
-    T = temperature.mean().compute()
-    print('T:', T) 
-
+    p0 = iris.coords.AuxCoord(100000.0, long_name='reference_pressure', units='Pa')
+    Rd_cp = 287.05 / 1004.0  
+    air_pressure_ratio = air_pressure/p0
+    air_pressure_ratio.convert_units('1')
+    temperature = potential_temperature*(air_pressure_ratio)**(Rd_cp)
+    # now the T looks correct, in 280~, so I commented it out now
+#     for i, temp in enumerate(temperature.data.flatten()):
+#         print(f'Temperature at grid point {i+1}: {temp:.2f} K')       
     return temperature
 
-
+# a subroutine to convert from kg/kg to molecule cm-3
 def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual_temperature):
-#     R = 287.0
-#     Na = 6.022e23
-#     air_density = air_pressure / (R * actual_temperature)
-#     number_concentration = mixing_ratio_data * air_density * Na
-#     return number_concentration
+    zboltz = 1.3807E-23  # (J/K) R = k * N_A, k=J/K, Avogadro's number (N_A)=6.022 x 10²³ entities/mol.
+    staird = air_pressure / (actual_temperature * zboltz * 1.0E6)  # 1.0E6 from m3 to cm3, another form of ideal gas law
 
-# Now I want to test the unit conversion, the above commented code works(and give me #/m3)
-    zboltz=1.3807E-23
-    staird=air_pressure/(actual_temperature*zboltz*1.0E6) # 1.0E6 from m3 to cm3
     number_concentration = mixing_ratio_data * staird
-    return number_concentration   
+    number_concentration.units = 'molecule cm-3'
+    return number_concentration
 
-def process_nc_file(filename, air_pressure, actual_temperature):
-    chunks = {'time': 20, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
-    ds = xr.open_dataset(filename, chunks=chunks)
+#the old xrraay method keeps on giving me error
+# def process_nc_file(filename, air_pressure, actual_temperature, bbox):
+#     chunks = {'time': 20, 'model_level_number': 5, 'grid_latitude': 10, 'grid_longitude': 10}
+#     ds = xr.open_dataset(filename, chunks=chunks)
+#     variable_name = filename.split('/')[-1].split('_')[1:-1]
+#     variable_data = ds['_'.join(variable_name)]
+
+#     variable_data_cube = variable_data.to_iris()
+#     variable_data_cube = add_lat_lon(variable_data_cube, bbox)
+#     variable_data = xr.DataArray.from_iris(variable_data_cube)
+    
+
+#     number_concentration_data = mixing_ratio_to_number_concentration(variable_data, air_pressure, actual_temperature)
+#     number_concentration_mean = number_concentration_data.mean(dim=['grid_latitude', 'grid_longitude']).sel(model_level_number=2)
+#     time_data = ds['time']
+#     number_concentration_mean_value = number_concentration_mean.compute()
+#     time_data_value = time_data.compute()
+#     return number_concentration_mean_value, time_data_value
+
+#the new traditional iris method is under test.
+def process_nc_file(filename, air_pressure, actual_temperature, bbox):
     variable_name = filename.split('/')[-1].split('_')[1:-1]
-    variable_data = ds['_'.join(variable_name)]
-    number_concentration_data = mixing_ratio_to_number_concentration(variable_data, air_pressure, actual_temperature)
-    number_concentration_mean = number_concentration_data.mean(dim=['grid_latitude', 'grid_longitude']).sel(model_level_number=2)
-    time_data = ds['time']
-    number_concentration_mean_value = number_concentration_mean.compute()
-    time_data_value = time_data.compute()
+    variable_data_cube = iris.load_cube(filename, '_'.join(variable_name))
+    variable_data_cube = add_lat_lon(variable_data_cube, bbox)
+    
+    # Print variable_data after loading with Iris
+    print("variable_data after loading with Iris:")
+    print(variable_data_cube)
+
+    number_concentration_data = mixing_ratio_to_number_concentration(variable_data_cube, air_pressure, actual_temperature)
+    number_concentration_mean = number_concentration_data.collapsed(['grid_latitude', 'grid_longitude'], iris.analysis.MEAN)
+    number_concentration_data = number_concentration_data.extract(iris.Constraint(model_level_number=2))
+
+    time_data = variable_data_cube.coord('time')
+    number_concentration_mean_value = number_concentration_mean
+    time_data_value = time_data.points
     return number_concentration_mean_value, time_data_value
 
-#3 is too high, maybe 2 is better, given the tower height.
-
-def process_nc_files(filenames, air_pressure, actual_temperature):
+def process_nc_files(filenames, air_pressure, actual_temperature, bbox):
     number_concentration_mean_values = []
     time_data_values = []
     for filename in filenames:
-        number_concentration_mean_value, time_data_value = process_nc_file(filename, air_pressure, actual_temperature)
+        number_concentration_mean_value, time_data_value = process_nc_file(filename, air_pressure, actual_temperature, bbox)
         number_concentration_mean_values.append(number_concentration_mean_value)
         time_data_values.append(time_data_value)
     return number_concentration_mean_values, time_data_values
 
-# Updated plot_data function
+
 def plot_data(time_data_values, number_concentration_mean_values, filenames):
     fig, axes = plt.subplots(5, 1, figsize=(6, 20), sharex=True)
     colors = ['tab:blue', 'tab:orange']
     markers = ['o', 's']
-
     labels = ['Binary nucleation', 'Updated ion-ternary nucleation']
 
     for i in range(5):
-        axes[i].plot(time_data_values[i], number_concentration_mean_values[i], label=labels[0], color=colors[0], marker=markers[0], markersize=3, linewidth=1)
-        axes[i].plot(time_data_values[i+5], number_concentration_mean_values[i+5], label=labels[1], color=colors[1], marker=markers[1], markersize=3, linewidth=1)
+        axes[i].plot(time_data_values[i], number_concentration_mean_values[i].data.tolist(), label=labels[0], color=colors[0], marker=markers[0], markersize=3, linewidth=1)
+        axes[i].plot(time_data_values[i+5], number_concentration_mean_values[i+5].data.tolist(), label=labels[1], color=colors[1], marker=markers[1], markersize=3, linewidth=1)
 
         variable_name = filenames[i].split('/')[-1].split('_')[8:10]
         variable_name = '_'.join(variable_name)
@@ -81,7 +154,6 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
         axes[i].set_xlabel('Time', fontsize=12)
         axes[i].set_ylabel('#/cm3', fontsize=12)
         axes[i].legend()
-
         # Set date labels every 2 days
         axes[i].xaxis.set_major_locator(mdates.DayLocator(interval=2))
         axes[i].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
@@ -91,18 +163,17 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
     plt.xticks(rotation=30)
     plt.show()
 
+
 # Now need to read in the file
 path_ct706 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-ct706/full_nc_files/" #i_nuc=2
 path_cs093 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-cs093/full_nc_files/" #i_nuc=4
 
 filenames = [
-    # u-ct706 files
     path_ct706 + 'Rgn_number_of_particles_per_air_molecule_of_insoluble_aitken_mode_aerosol_in_air_m01s34i119.nc',
     path_ct706 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_accumulation_mode_aerosol_in_air_m01s34i107.nc',
     path_ct706 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_aitken_mode_aerosol_in_air_m01s34i103.nc',
     path_ct706 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_coarse_mode_aerosol_in_air_m01s34i113.nc',
     path_ct706 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_nucleation_mode_aerosol_in_air_m01s34i101.nc',
-    # u-cs093 files
     path_cs093 + 'Rgn_number_of_particles_per_air_molecule_of_insoluble_aitken_mode_aerosol_in_air_m01s34i119.nc',
     path_cs093 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_accumulation_mode_aerosol_in_air_m01s34i107.nc',
     path_cs093 + 'Rgn_number_of_particles_per_air_molecule_of_soluble_aitken_mode_aerosol_in_air_m01s34i103.nc',
@@ -116,14 +187,18 @@ air_pressure_file_ct706 = path_ct706 + 'Rgn_air_pressure_m01s00i408.nc'
 potential_temperature_file_cs093 = path_cs093 + 'Rgn_air_potential_temperature_m01s00i004.nc'
 air_pressure_file_cs093 = path_cs093 + 'Rgn_air_pressure_m01s00i408.nc'
 
-potential_temperature_ct706, air_pressure_ct706 = read_pt_data(potential_temperature_file_ct706, air_pressure_file_ct706)
+# Define the bounding box (in degrees) for the area of interest
+bbox = [-105, -104.5, 40.4, 40.8]
+
+potential_temperature_ct706, air_pressure_ct706 = read_pt_data(potential_temperature_file_ct706, air_pressure_file_ct706, bbox)
 actual_temperature_ct706 = convert_theta_to_temperature(potential_temperature_ct706, air_pressure_ct706)
 
-potential_temperature_cs093, air_pressure_cs093 = read_pt_data(potential_temperature_file_cs093, air_pressure_file_cs093)
+potential_temperature_cs093, air_pressure_cs093 = read_pt_data(potential_temperature_file_cs093, air_pressure_file_cs093, bbox)
 actual_temperature_cs093 = convert_theta_to_temperature(potential_temperature_cs093, air_pressure_cs093)
 
-number_concentration_mean_values_ct706, time_data_values_ct706 = process_nc_files(filenames[:5], air_pressure_ct706, actual_temperature_ct706)
-number_concentration_mean_values_cs093, time_data_values_cs093 = process_nc_files(filenames[5:], air_pressure_cs093, actual_temperature_cs093)
+number_concentration_mean_values_ct706, time_data_values_ct706 = process_nc_files(filenames[:5], air_pressure_ct706, actual_temperature_ct706, bbox)
+number_concentration_mean_values_cs093, time_data_values_cs093 = process_nc_files(filenames[5:], air_pressure_cs093, actual_temperature_cs093, bbox)
+
 
 number_concentration_mean_values = number_concentration_mean_values_ct706 + number_concentration_mean_values_cs093
 time_data_values = time_data_values_ct706 + time_data_values_cs093
