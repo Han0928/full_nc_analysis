@@ -1,3 +1,4 @@
+# %load /ocean/projects/atm200005p/ding0928/script_full_nc/time_series_dask_working.py
 import xarray as xr
 import dask.array as da
 import matplotlib.pyplot as plt
@@ -75,7 +76,7 @@ def convert_theta_to_temperature(potential_temperature, air_pressure):
 #         print(f'Temperature at grid point {i+1}: {temp:.2f} K')       
     return temperature
 
-# a subroutine to convert from kg/kg to molecule cm-3
+# to convert from kg/kg to molecule cm-3
 def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual_temperature):
     zboltz = 1.3807E-23  # (J/K) R = k * N_A, k=J/K, Avogadro's number (N_A)=6.022 x 1023 entities/mol.
     staird = air_pressure / (actual_temperature * zboltz * 1.0E6)  # 1.0E6 from m3 to cm3, another form of ideal gas law
@@ -83,7 +84,7 @@ def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual
     number_concentration.units = 'molecule cm-3'
     return number_concentration
 
-#the new traditional iris method is under test.
+#iris to process one single file
 def process_single_file(filename, air_pressure, actual_temperature, bbox):
     variable_name = filename.split('/')[-1].split('_')[1:-1]
     variable_data_cube = iris.load_cube(filename, '_'.join(variable_name))
@@ -95,13 +96,9 @@ def process_single_file(filename, air_pressure, actual_temperature, bbox):
 
     time_data = variable_data_cube.coord('time')
     time_data_value = time_data.points
-    
-    print("Number concentration mean shape:", number_concentration_mean.shape)
-    print("Time data value shape:", time_data_value.shape)
-
     return number_concentration_mean, time_data_value
 
-
+# to process all the files within a loop
 def process_nc_files(filenames, air_pressure, actual_temperature, bbox):
     number_concentration_mean_values = []
     time_data_values = []
@@ -109,8 +106,6 @@ def process_nc_files(filenames, air_pressure, actual_temperature, bbox):
         number_concentration_mean_value, time_data_value = process_single_file(filename, air_pressure, actual_temperature, bbox)
         number_concentration_mean_values.append(number_concentration_mean_value)
         time_data_values.append(time_data_value)
-    print('number_concentration_mean_values',number_concentration_mean_values[0].data)
-    print('time_data_values',time_data_values)
     return number_concentration_mean_values, time_data_values
 
 
@@ -121,8 +116,8 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
     labels = ['Binary nucleation', 'Updated ion-ternary nucleation']
     
     for i in range(5):
-        print("time_data_values[i].dimension",time_data_values[i])
-        print("number_concentration_mean_values[i][0].data.dimension",number_concentration_mean_values[i].data)
+        # print("time_data_values[i].dimension",time_data_values[i])
+        # print("number_concentration_mean_values[i][0].data.dimension",number_concentration_mean_values[i].data)
         axes[i].plot(time_data_values[i], number_concentration_mean_values[i].data, label=labels[0], color=colors[0], marker=markers[0], markersize=3, linewidth=1)
         axes[i].plot(time_data_values[i+5], number_concentration_mean_values[i+5].data, label=labels[1], color=colors[1], marker=markers[1], markersize=3, linewidth=1)
 
@@ -135,14 +130,12 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
         axes[i].set_xlabel('Time', fontsize=12)
         axes[i].set_ylabel('#/cm3', fontsize=12)
         axes[i].legend()
-        axes[i].xaxis.set_major_locator(mdates.DayLocator(interval=5))
-        axes[i].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
 
-    fig.suptitle('BAO tower:40.5°N, -105', fontsize=16, fontweight='bold')
+    fig.suptitle('BAO tower:40.5°N, -105W', fontsize=16, fontweight='bold')
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.xticks(rotation=30)
     plt.show()
-    plt.savefig('BAO tower:40.5°N, -105.png')
+    plt.savefig('BAO_tower_40.5°N_-105.png')
 
 # Now need to read in the file
 path_ct706 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-ct706/full_nc_files/" #i_nuc=2
@@ -178,14 +171,8 @@ actual_temperature_cs093 = convert_theta_to_temperature(potential_temperature_cs
 
 number_concentration_mean_values_ct706, time_data_values_ct706 = process_nc_files(filenames[:5], air_pressure_ct706, actual_temperature_ct706, bbox)
 number_concentration_mean_values_cs093, time_data_values_cs093 = process_nc_files(filenames[5:], air_pressure_cs093, actual_temperature_cs093, bbox)
-print("number_concentration_mean_values_ct706 shape:", len(number_concentration_mean_values_ct706))   # number_concentration_mean_values_ct706 shape: 5
-print("time_data_values_ct706:", len(time_data_values_ct706))  # time_data_values_ct706: 5
-print("number_concentration_mean_values_cs093 shape:", len(number_concentration_mean_values_cs093))   # number_concentration_mean_values_cs093 shape: 5
-print("time_data_values_cs093:", len(time_data_values_cs093))   # time_data_values_cs093: 5
 number_concentration_mean_values = number_concentration_mean_values_ct706 + number_concentration_mean_values_cs093
 time_data_values = time_data_values_ct706 + time_data_values_cs093
-print("number_concentration_mean_values shape:", len(number_concentration_mean_values))   # number_concentration_mean_values shape: 10
-print("time_data_values:", len(time_data_values))  # time_data_values: 10
 
 plot_data(time_data_values, number_concentration_mean_values, filenames[:5] + filenames[5:])
 
