@@ -90,6 +90,9 @@ def process_single_file(filename, air_pressure, actual_temperature, bbox):
     variable_data_cube = iris.load_cube(filename, '_'.join(variable_name))
     variable_data_cube = add_lat_lon(variable_data_cube, bbox)
 
+    # Select only the desired vertical levels (bottom 1-10)
+    # variable_data_cube = variable_data_cube.extract(iris.Constraint(model_level_number=lambda x: 1 <= x <= 10))
+
     number_concentration_data = mixing_ratio_to_number_concentration(variable_data_cube, air_pressure, actual_temperature)
     number_concentration_mean = number_concentration_data.collapsed(['grid_latitude', 'grid_longitude'], iris.analysis.MEAN)
     number_concentration_mean = number_concentration_mean.extract(iris.Constraint(model_level_number=2))
@@ -110,7 +113,7 @@ def process_nc_files(filenames, air_pressure, actual_temperature, bbox):
 
 
 def plot_data(time_data_values, number_concentration_mean_values, filenames):
-    fig, axes = plt.subplots(5, 1, figsize=(6, 20), sharex=True)
+    fig, axes = plt.subplots(5, 1, figsize=(10, 20), sharex=True)
     colors = ['tab:blue', 'tab:orange']
     markers = ['o', 's']
     labels = ['Binary nucleation', 'Updated ion-ternary nucleation']
@@ -131,11 +134,11 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
         axes[i].set_ylabel('#/cm3', fontsize=12)
         axes[i].legend()
 
-    fig.suptitle('BAO tower:40.5°N, -105W', fontsize=16, fontweight='bold')
+    fig.suptitle('Storm Peak Lab:40.45° N, 106.6°', fontsize=16, fontweight='bold')
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.xticks(rotation=30)
     plt.show()
-    plt.savefig('BAO_tower_40.5°N_-105.png')
+    plt.savefig('output_fig/ncfull_Storm_Peak_Lab.png')
 
 # Now need to read in the file
 path_ct706 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-ct706/full_nc_files/" #i_nuc=2
@@ -161,8 +164,8 @@ potential_temperature_file_cs093 = path_cs093 + 'Rgn_air_potential_temperature_m
 air_pressure_file_cs093 = path_cs093 + 'Rgn_air_pressure_m01s00i408.nc'
 
 # Define the bounding box (in degrees) for the area of interest
-bbox = [-105, -104.5, 40.4, 40.8] #BAO tower, low altitude
-#bbox = [-107, -106.5, 40.5, 40.8] #Storm Peak Lab:40.45° N, 106.6°  wester-high-altitude
+#bbox = [-105, -104.5, 40.4, 40.8] #BAO tower, low altitude
+bbox = [-107, -106.5, 40.5, 40.8] #Storm Peak Lab:40.45° N, 106.6°  wester-high-altitude
 potential_temperature_ct706, air_pressure_ct706 = read_pt_data(potential_temperature_file_ct706, air_pressure_file_ct706, bbox)
 actual_temperature_ct706 = convert_theta_to_temperature(potential_temperature_ct706, air_pressure_ct706)
 
@@ -175,5 +178,4 @@ number_concentration_mean_values = number_concentration_mean_values_ct706 + numb
 time_data_values = time_data_values_ct706 + time_data_values_cs093
 
 plot_data(time_data_values, number_concentration_mean_values, filenames[:5] + filenames[5:])
-
 
