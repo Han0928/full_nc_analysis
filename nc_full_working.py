@@ -9,6 +9,7 @@ import iris
 import iris.coord_systems as cs
 import iris.coord_systems as coord_systems
 import datetime
+import dateutil.tz
 
 os.environ["OPENBLAS_NUM_THREADS"] = "8"
 
@@ -35,7 +36,6 @@ def add_lat_lon(cube, bbox):
     lon2d = np.tile(source_lon,[len(source_lat),1])
 
     lons, lats = iris.analysis.cartography.unrotate_pole(lon2d, lat2d, polelon, polelat)
-
     longit = iris.coords.AuxCoord(lons,'longitude', units='degrees', coord_system=cs.GeogCS(6371229.0))
     latit =  iris.coords.AuxCoord(lats,'latitude', units='degrees', coord_system=cs.GeogCS(6371229.0))
     
@@ -80,18 +80,27 @@ def mixing_ratio_to_number_concentration(mixing_ratio_data, air_pressure, actual
     number_concentration.units = 'molecule cm-3'
     return number_concentration
 
-#iris to process one single file
+# new version to test the date format,working
 def process_single_file(filename, air_pressure, actual_temperature, bbox):
     variable_name = filename.split('/')[-1].split('_')[1:-1]
     variable_data_cube = iris.load_cube(filename, '_'.join(variable_name))
     variable_data_cube = add_lat_lon(variable_data_cube, bbox)
-    # variable_data_cube = variable_data_cube.extract(iris.Constraint(model_level_number=lambda x: 1 <= x <= 10))
     number_concentration_data = mixing_ratio_to_number_concentration(variable_data_cube, air_pressure, actual_temperature)
     number_concentration_mean = number_concentration_data.collapsed(['grid_latitude', 'grid_longitude'], iris.analysis.MEAN)
     number_concentration_mean = number_concentration_mean.extract(iris.Constraint(model_level_number=1))
     time_data = variable_data_cube.coord('time')
+    print('time_data', time_data)
+    
+    # convert time data to list of datetime objects
     time_data_value = time_data.points
-    return number_concentration_mean, time_data_value
+    time_units = time_data.units
+    epoch = datetime.datetime(1970, 1, 1)
+    time_data_datetime = [(epoch + datetime.timedelta(hours=float(tp))) for tp in time_data_value]
+    
+    print('time_data_value', time_data_value)
+    print('time_units', time_units)
+    print('time_data_datetime', time_data_datetime) 
+    return number_concentration_mean, time_data_datetime
 
 # to process all the files within a loop
 def process_nc_files(filenames, air_pressure, actual_temperature, bbox):
@@ -108,32 +117,6 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
     colors = ['tab:blue', 'tab:orange']
     markers = ['o', 's']
     labels = ['Binary nucleation', 'Updated ion-ternary nucleation']
-    print('time_data_values',time_data_values)#numpy array
-    # Convert to list of datetime.datetime objects, here is the problem for the hour since 1970 to now;
-    start_datetime = datetime.datetime(1970, 1, 1)
-    print(type(time_data_values)) # <class 'list'>
-    
-    datetime_values = [start_datetime + datetime.timedelta(hours=timestamp) for timestamp in time_data_values]
-    # Convert datetime objects to formatted strings
-    formatted_dates = [dt.strftime('%y-%m-%d') for dt in datetime_values]
-    print(formatted_dates)
-
-
-    # Convert to list of datetime.datetime objects
-    datetime_values = [datetime.datetime.fromtimestamp(timestamp) for timestamp in time_data_values]
-
-    # Convert datetime objects to formatted strings
-    formatted_dates = [dt.strftime('%y-%m-%d') for dt in datetime_values]
-
-    print(formatted_dates)
-
-    datetimes = mdates.num2date(time_data_values) 
-    print(type(datetimes[0])) #<class 'list'>
-    print(datetimes[0])
-    # Format datetime objects as strings in yy-mm-dd format
-    # formatted_dates = [datetime.strftime('%y-%m-%d') for datetime in datetimes]
-    formatted_dates = [dt.strftime('%y-%m-%d') for dt in datetimes]
-
 
     for i in range(5):
         axes[i].plot(time_data_values[i], number_concentration_mean_values[i].data, label=labels[0], color=colors[0], marker=markers[0], markersize=3, linewidth=1)
@@ -145,17 +128,14 @@ def plot_data(time_data_values, number_concentration_mean_values, filenames):
         axes[i].tick_params(axis='both', labelsize=12)
         axes[i].set_xlabel('Time', fontsize=12)
         axes[i].set_ylabel('#/cm3', fontsize=12)
-        # Set tick labels on x-axis
-        axes[-1].set_xticks(time_data_values)
-        axes[-1].set_xticklabels(formatted_dates, rotation=30, ha='right')
         if i == 0:
             axes[i].legend()
 
-    fig.suptitle('BAO tower:40 03(N), 105 00W\n 0.1 degree, z=1', fontsize=16, fontweight='bold')
+    fig.suptitle('BAO tower,40.03(N),105.00(W) \n 0.1 degree, z=1', fontsize=16, fontweight='bold') #https://psl.noaa.gov/technology/bao/site/ 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.xticks(rotation=30)
     plt.show()
-    plt.savefig('output_fig/ncfull_BAO_0.1degree.png')
+    plt.savefig('output_fig/ncfull_BAO_0.1degree_Z1.png')
 
 path_ct706 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-ct706/full_nc_files/" #i_nuc=2
 path_cs093 = "/ocean/projects/atm200005p/ding0928/nc_file_full/u-cs093/full_nc_files/" #i_nuc=4
@@ -179,7 +159,7 @@ air_pressure_file_ct706 = path_ct706 + 'Rgn_air_pressure_m01s00i408.nc'
 potential_temperature_file_cs093 = path_cs093 + 'Rgn_air_potential_temperature_m01s00i004.nc'
 air_pressure_file_cs093 = path_cs093 + 'Rgn_air_pressure_m01s00i408.nc'
 
-bbox = [-105.05, -104.95, 40.00, 40.06] #BAO tower,40 03 00.10028(N) Longitude: 105 00 13.80781(W) Elevation: 1584 m Height: 985 ft (300 m)
+bbox = [-105.05, -104.95, 39.95, 40.05] #BAO tower,40 03 00.10028(N) Longitude: 105 00 13.80781(W) Elevation: 1584 m Height: 985 ft (300 m)
 # bbox = [-106.65, -106.55, 40.40, 40.50] #Storm Peak Lab:40.45° N, 106.6° W, high altitude
 potential_temperature_ct706, air_pressure_ct706 = read_pt_data(potential_temperature_file_ct706, air_pressure_file_ct706, bbox)
 actual_temperature_ct706 = convert_theta_to_temperature(potential_temperature_ct706, air_pressure_ct706)
